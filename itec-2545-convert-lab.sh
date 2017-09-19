@@ -125,6 +125,79 @@ function add_makefile() { set -e
   git add Makefile
 }
 
+function get_iml() { set -e
+  declare imls=(Java\ Auto\ Grader*.iml)
+  echo "${imls[0]}"
+}
+
+function generate_iml_patch() { set -e
+  declare    iml="$1"
+  declare -a questions=("${@:2}")
+
+  cat <<EOF
+--- a/$iml$(echo -ne '\t')
++++ b/$iml$(echo -ne '\t')
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <module org.jetbrains.idea.maven.project.MavenProjectsManager.isMavenModule="true" type="JAVA_MODULE" version="4">
+-  <component name="NewModuleRootManager" LANGUAGE_LEVEL="JDK_1_8" inherit-compiler-output="false">
++  <component name="NewModuleRootManager" LANGUAGE_LEVEL="JDK_1_8">
+     <output url="file://\$MODULE_DIR\$/target/classes" />
+     <output-test url="file://\$MODULE_DIR\$/target/test-classes" />
+     <content url="file://\$MODULE_DIR\$">
+EOF
+
+  cat <<EOF
+@@ -10,8 +10,$((8 + 9 * ($# - 1) - 1)) @@
+       <excludeFolder url="file://\$MODULE_DIR\$/target" />
+     </content>
+     <orderEntry type="inheritedJdk" />
+EOF
+
+  declare question_name
+  for question_name in "${questions[@]}"; do
+    cat <<EOF
++    <orderEntry type="module-library">
++      <library>
++        <CLASSES>
++          <root url="jar://\$MODULE_DIR\$/out/jars/$question_name.jar!/" />
++        </CLASSES>
++        <JAVADOC />
++        <SOURCES />
++      </library>
++    </orderEntry>
+EOF
+  done
+
+  cat <<EOF
+     <orderEntry type="sourceFolder" forTests="false" />
+-    <orderEntry type="library" name="Maven: edu.minneapolis:input-utils:1.0.1" level="project" />
+     <orderEntry type="library" scope="TEST" name="Maven: junit:junit:4.12" level="project" />
+     <orderEntry type="library" scope="TEST" name="Maven: org.hamcrest:hamcrest-core:1.3" level="project" />
+     <orderEntry type="library" name="Maven: com.google.guava:guava:22.0" level="project" />
+EOF
+}
+
+function patch_iml() { set -e
+  declare    iml="$1"
+  declare -a questions=("${@:2}")
+
+  patch -Np1 < <(generate_iml_patch "$iml" "${questions[@]}")
+}
+
+function rename_iml() { set -e
+  declare iml="$1"
+  declare new_iml='Java_Auto_Grader.iml'
+
+  mv "$iml" "$new_iml"
+  echo "$new_iml"
+}
+
+function add_iml() { set -e
+  declare iml="$1"
+  git add "$iml"
+}
+
 function create_gitignore() { set -e
   rm -f .gitignore
   cat > .gitignore <<EOF
@@ -151,13 +224,13 @@ function add_gitignore() { set -e
 }
 
 function remove_idea() { set -e
-  git rm -r --cache .idea
+  git rm -r .idea
 }
 
 function add_submodules() { set -e
   declare submodule
   for submodule in "${SUBMODULES[@]}"; do
-    git submodule add "$submodule";
+    git submodule add --force "$submodule";
   done
 
   git submodule update --init --recursive
@@ -179,6 +252,9 @@ function convert() { set -e
     questions+=("$question_name")
   done < <(get_questions "$package")
 
+  declare iml new_iml
+  iml="$(get_iml)"
+
   make_manifests_dir
   create_manifests "$package" "${questions[@]}"
   add_manifests
@@ -189,6 +265,10 @@ function convert() { set -e
 
   create_makefile "$week_number" "${questions[@]}"
   add_makefile
+
+  patch_iml "$iml" "${questions[@]}"
+  new_iml="$(rename_iml "$iml")" && iml="$new_iml"
+  add_iml "$iml"
 
   create_gitignore
   add_gitignore
@@ -205,11 +285,13 @@ function commit() { set -e
   git commit -at <(cat <<EOF
 Automatically migrated by $THIS_SCRIPT
 
-* Removed non-source .idea IDE specific configuration.
-* Added helper submodules ${SUBMODULES[*]}.
-* Created Makefile for GNU Make build system.
 * Generated JAR manifests for JAR applications.
 * Created C source files for JNI usage.
+* Created Makefile for GNU Make build system.
+* Patched auto grader "iml" to include project JARs in classpath.
+* Created standard ITEC-2545 lab gitignore.
+* Removed non-source .idea IDE specific configuration.
+* Added helper submodules ${SUBMODULES[*]}.
 * Learn more about $THIS_SCRIPT at <$THIS_SCRIPT_URL>.
 EOF
   )
@@ -242,6 +324,8 @@ case "$1" in
     ;;
   -h|--help|help)
     usage "$0"
+    ;;
+  include)
     ;;
   *)
     usage "$0"
